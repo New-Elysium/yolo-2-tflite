@@ -2,8 +2,9 @@
 # coding=utf-8
 
 import tensorflow as tf
+import keras
 # import tensorflow_addons as tfa
-class BatchNormalization(tf.keras.layers.BatchNormalization):
+class BatchNormalization(keras.layers.BatchNormalization):
     """
     "Frozen state" and "inference mode" are two separate concepts.
     `layer.trainable = False` is to freeze the layer, so the layer will use
@@ -18,17 +19,17 @@ class BatchNormalization(tf.keras.layers.BatchNormalization):
 
 def convolutional(input_layer, filters_shape, downsample=False, activate=True, bn=True, activate_type='leaky'):
     if downsample:
-        input_layer = tf.keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(input_layer)
+        input_layer = keras.layers.ZeroPadding2D(((1, 0), (1, 0)))(input_layer)
         padding = 'valid'
         strides = 2
     else:
         strides = 1
         padding = 'same'
 
-    conv = tf.keras.layers.Conv2D(filters=filters_shape[-1], kernel_size = filters_shape[0], strides=strides, padding=padding,
-                                  use_bias=not bn, kernel_regularizer=tf.keras.regularizers.l2(0.0005),
-                                  kernel_initializer=tf.random_normal_initializer(stddev=0.01),
-                                  bias_initializer=tf.constant_initializer(0.))(input_layer)
+    conv = keras.layers.Conv2D(filters=filters_shape[-1], kernel_size = filters_shape[0], strides=strides, padding=padding,
+                                  use_bias=not bn, kernel_regularizer=keras.regularizers.l2(0.0005),
+                                  kernel_initializer=keras.initializers.RandomNormal(stddev=0.01),
+                                  bias_initializer=keras.initializers.Constant(0.))(input_layer)
 
     if bn: conv = BatchNormalization()(conv)
     if activate == True:

@@ -3,6 +3,7 @@
 
 import numpy as np
 import tensorflow as tf
+import keras
 import core.utils as utils
 import core.common as common
 import core.backbone as backbone

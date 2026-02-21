@@ -3,7 +3,9 @@ import random
 import colorsys
 import numpy as np
 import tensorflow as tf
+import keras
 from core.config import cfg
+from core.cfg_parser import CFGParser
 
 def load_freeze_layer(model='yolov4', tiny=False):
     if tiny:
@@ -80,6 +82,28 @@ def read_class_names(class_file_name):
     return names
 
 def load_config(FLAGS):
+    if hasattr(FLAGS, 'cfg') and FLAGS.cfg:
+        # Generic configuration from CFG file
+        return load_config_from_cfg(FLAGS.cfg)
+    else:
+        # Legacy configuration
+        return load_config_legacy(FLAGS)
+
+def load_config_from_cfg(cfg_path):
+    """Load configuration from CFG file"""
+    parser = CFGParser(cfg_path)
+    net_config = parser.get_net_config()
+    
+    # Extract configuration
+    STRIDES = np.array(net_config.get('strides', [8, 16, 32]))
+    ANCHORS = get_anchors_from_cfg(parser)
+    NUM_CLASS = parser.get_num_classes()
+    XYSCALE = net_config.get('xyscale', [1.2, 1.1, 1.05])
+    
+    return STRIDES, ANCHORS, NUM_CLASS, XYSCALE
+
+def load_config_legacy(FLAGS):
+    """Load configuration using legacy method"""
     if FLAGS.tiny:
         STRIDES = np.array(cfg.YOLO.STRIDES_TINY)
         ANCHORS = get_anchors(cfg.YOLO.ANCHORS_TINY, FLAGS.tiny)
@@ -95,12 +119,20 @@ def load_config(FLAGS):
 
     return STRIDES, ANCHORS, NUM_CLASS, XYSCALE
 
-def get_anchors(anchors_path, tiny=False):
-    anchors = np.array(anchors_path)
-    if tiny:
-        return anchors.reshape(2, 3, 2)
+def get_anchors_from_cfg(parser):
+    """Get anchors from CFG parser"""
+    anchors = parser.get_anchors()
+    yolo_layers = parser.get_yolo_layers()
+    
+    if len(yolo_layers) == 3:
+        # Standard YOLO with 3 scales
+        return np.array(anchors).reshape(3, 3, 2)
+    elif len(yolo_layers) == 2:
+        # YOLO-tiny with 2 scales
+        return np.array(anchors).reshape(2, 3, 2)
     else:
-        return anchors.reshape(3, 3, 2)
+        # Single scale or custom
+        return np.array(anchors).reshape(-1, 3, 2)
 
 def image_preprocess(image, target_size, gt_boxes=None):
 

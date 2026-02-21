@@ -2,6 +2,7 @@
 # coding=utf-8
 
 import tensorflow as tf
+import keras
 import core.common as common
 
 def darknet53(input_data):
@@ -117,7 +118,7 @@ def cspdarknet53_tiny(input_data):
     input_data = tf.concat([input_data, route_1], axis=-1)
     input_data = common.convolutional(input_data, (1, 1, 32, 64))
     input_data = tf.concat([route, input_data], axis=-1)
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
 
     input_data = common.convolutional(input_data, (3, 3, 64, 128))
     route = input_data
@@ -128,7 +129,7 @@ def cspdarknet53_tiny(input_data):
     input_data = tf.concat([input_data, route_1], axis=-1)
     input_data = common.convolutional(input_data, (1, 1, 64, 128))
     input_data = tf.concat([route, input_data], axis=-1)
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
 
     input_data = common.convolutional(input_data, (3, 3, 128, 256))
     route = input_data
@@ -140,7 +141,7 @@ def cspdarknet53_tiny(input_data):
     input_data = common.convolutional(input_data, (1, 1, 128, 256))
     route_1 = input_data
     input_data = tf.concat([route, input_data], axis=-1)
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
 
     input_data = common.convolutional(input_data, (3, 3, 512, 512))
 
@@ -148,18 +149,18 @@ def cspdarknet53_tiny(input_data):
 
 def darknet53_tiny(input_data):
     input_data = common.convolutional(input_data, (3, 3, 3, 16))
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 16, 32))
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 32, 64))
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 64, 128))
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 128, 256))
     route_1 = input_data
-    input_data = tf.keras.layers.MaxPool2D(2, 2, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 2, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 256, 512))
-    input_data = tf.keras.layers.MaxPool2D(2, 1, 'same')(input_data)
+    input_data = keras.layers.MaxPool2D(2, 1, 'same')(input_data)
     input_data = common.convolutional(input_data, (3, 3, 512, 1024))
 
     return route_1, input_data
