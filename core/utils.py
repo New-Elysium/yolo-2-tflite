@@ -6,6 +6,11 @@ import tensorflow as tf
 from core.config import cfg
 
 def load_freeze_layer(model='yolov4', tiny=False):
+    if model == 'yolov5':
+        # YOLOv5 detection head output layers (no BN, just conv+bias)
+        # The exact layer indices depend on the model build; these are
+        # identified dynamically in load_weights_v5 instead.
+        return []
     if tiny:
         if model == 'yolov3':
             freeze_layouts = ['conv2d_9', 'conv2d_12']
@@ -80,6 +85,13 @@ def read_class_names(class_file_name):
     return names
 
 def load_config(FLAGS):
+    if FLAGS.model == 'yolov5':
+        STRIDES = np.array(cfg.YOLO.STRIDES)
+        ANCHORS = get_anchors(cfg.YOLO.ANCHORS_V5, False)
+        XYSCALE = [1, 1, 1]  # Not used for YOLOv5 (baked into decode formula)
+        NUM_CLASS = len(read_class_names(cfg.YOLO.CLASSES))
+        return STRIDES, ANCHORS, NUM_CLASS, XYSCALE
+
     if FLAGS.tiny:
         STRIDES = np.array(cfg.YOLO.STRIDES_TINY)
         ANCHORS = get_anchors(cfg.YOLO.ANCHORS_TINY, FLAGS.tiny)
@@ -367,9 +379,146 @@ def freeze_all(model, frozen=True):
     if isinstance(model, tf.keras.Model):
         for l in model.layers:
             freeze_all(l, frozen)
+
 def unfreeze_all(model, frozen=False):
     model.trainable = not frozen
     if isinstance(model, tf.keras.Model):
         for l in model.layers:
             unfreeze_all(l, frozen)
+
+
+def load_weights_v5(model, weights_file):
+    """Load YOLOv5 weights from PyTorch .pt file or pre-converted .npz file.
+
+    Supports two weight formats:
+    1. PyTorch checkpoint (.pt) - requires torch to be installed
+    2. Pre-converted numpy archive (.npz) - no torch dependency
+
+    Use convert_weights.py to convert .pt to .npz format.
+
+    Args:
+        model: TensorFlow Keras model with YOLOv5 architecture.
+        weights_file: Path to .pt or .npz weights file.
+    """
+    if weights_file.endswith('.npz'):
+        _load_weights_v5_from_npz(model, weights_file)
+    elif weights_file.endswith('.pt'):
+        _load_weights_v5_from_pt(model, weights_file)
+    else:
+        raise ValueError(
+            f"Unsupported weight format: {weights_file}. "
+            "Use .pt (PyTorch) or .npz (pre-converted numpy) files."
+        )
+
+def _load_weights_v5_from_pt(model, weights_file):
+    """Load YOLOv5 weights directly from PyTorch .pt checkpoint."""
+    try:
+        import torch
+    except ImportError:
+        raise ImportError(
+            "PyTorch is required to load .pt weight files. "
+            "Install with: pip install torch\n"
+            "Or convert weights first with: python convert_weights.py --weights yolov5s.pt"
+        )
+
+    checkpoint = torch.load(weights_file, map_location='cpu')
+    if 'model' in checkpoint:
+        pt_model = checkpoint['model'].float()
+    elif 'ema' in checkpoint and checkpoint['ema'] is not None:
+        pt_model = checkpoint['ema'].float()
+    else:
+        raise ValueError("Could not find 'model' or 'ema' in checkpoint")
+
+    pt_state = pt_model.state_dict()
+    _assign_pt_weights_to_tf(model, pt_state)
+
+def _load_weights_v5_from_npz(model, weights_file):
+    """Load YOLOv5 weights from pre-converted .npz file."""
+    data = np.load(weights_file, allow_pickle=True)
+    weight_list = data['weights']
+
+    conv_layers = [l for l in model.layers if 'conv2d' in l.name]
+    bn_layers = [l for l in model.layers if 'batch_normalization' in l.name]
+
+    conv_idx = 0
+    bn_idx = 0
+    for conv_layer in conv_layers:
+        if conv_layer.use_bias:
+            # Detection head layer (no BN)
+            key_w = f'conv_{conv_idx}_weight'
+            key_b = f'conv_{conv_idx}_bias'
+            if key_w in data and key_b in data:
+                conv_layer.set_weights([data[key_w], data[key_b]])
+        else:
+            # Regular Conv-BN layer
+            key_w = f'conv_{conv_idx}_weight'
+            if key_w in data:
+                conv_layer.set_weights([data[key_w]])
+            if bn_idx < len(bn_layers):
+                key_bn = f'bn_{bn_idx}_weights'
+                if key_bn in data:
+                    bn_layers[bn_idx].set_weights(data[key_bn])
+                bn_idx += 1
+        conv_idx += 1
+
+def _assign_pt_weights_to_tf(model, pt_state):
+    """Map PyTorch state dict weights to TensorFlow model layers.
+
+    PyTorch Conv2d weights are (out_ch, in_ch, kH, kW).
+    TF Conv2D weights are (kH, kW, in_ch, out_ch).
+    """
+    conv_layers = [l for l in model.layers if 'conv2d' in l.name]
+    bn_layers = [l for l in model.layers if 'batch_normalization' in l.name]
+
+    # Build ordered list of PyTorch weight keys
+    pt_conv_keys = []
+    pt_bn_keys = []
+    for key in pt_state.keys():
+        if key.endswith('.conv.weight') or (key.endswith('.weight') and 'bn' not in key and 'running' not in key):
+            if len(pt_state[key].shape) == 4:  # Conv2D weight
+                pt_conv_keys.append(key)
+        elif key.endswith('.bn.weight') or key.endswith('.bn.bias'):
+            base = key.rsplit('.', 1)[0]
+            if base not in pt_bn_keys:
+                pt_bn_keys.append(base)
+
+    # Deduplicate bn keys
+    pt_bn_keys_unique = list(dict.fromkeys(pt_bn_keys))
+
+    conv_idx = 0
+    bn_idx = 0
+
+    for i, conv_layer in enumerate(conv_layers):
+        if conv_idx >= len(pt_conv_keys):
+            break
+
+        pt_key = pt_conv_keys[conv_idx]
+        pt_weight = pt_state[pt_key].numpy()
+        # Transpose from PyTorch (O, I, H, W) to TF (H, W, I, O)
+        tf_weight = pt_weight.transpose(2, 3, 1, 0)
+
+        if conv_layer.use_bias:
+            # Detection head - has bias, no BN
+            bias_key = pt_key.replace('.weight', '.bias')
+            if bias_key in pt_state:
+                pt_bias = pt_state[bias_key].numpy()
+                conv_layer.set_weights([tf_weight, pt_bias])
+            else:
+                conv_layer.set_weights([tf_weight])
+        else:
+            conv_layer.set_weights([tf_weight])
+
+            # Assign corresponding BN weights
+            if bn_idx < len(bn_layers) and bn_idx < len(pt_bn_keys_unique):
+                bn_base = pt_bn_keys_unique[bn_idx]
+                gamma = pt_state[f'{bn_base}.weight'].numpy()
+                beta = pt_state[f'{bn_base}.bias'].numpy()
+                mean = pt_state[f'{bn_base}.running_mean'].numpy()
+                var = pt_state[f'{bn_base}.running_var'].numpy()
+                bn_layers[bn_idx].set_weights([gamma, beta, mean, var])
+                bn_idx += 1
+
+        conv_idx += 1
+
+    print(f"Loaded {conv_idx} conv layers and {bn_idx} batch norm layers from PyTorch weights")
 

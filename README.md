@@ -1,243 +1,219 @@
-# Convert_Darknet_YOLO_to_TensorFlow
+# YOLO to TensorFlow / TensorFlow Lite Converter
 
-Darknet YOLO architectures implemented in Tensorflow and Tensorflow Lite.
+Convert YOLO object detection models (v3, v4, v5) to TensorFlow and TensorFlow Lite for deployment on edge devices, mobile phones, and embedded systems.
 
-<table boarder=0>
+<table>
   <tr>
     <td><img src="https://img.shields.io/badge/python%20-%2314354C.svg?&style=for-the-badge&logo=python&logoColor=white"/></td>
     <td><img src="https://img.shields.io/badge/TensorFlow%20-%23FF6F00.svg?&style=for-the-badge&logo=TensorFlow&logoColor=white" /></td>
-    <td><img src="https://img.shields.io/badge/Google%20Drive%20-%23FF9900.svg?&style=for-the-badge&logo=google-drive&logoColor=white" /></td>
-    <td><img src="https://img.shields.io/badge/YOLO%20v%204%20-%23121011.svg?&style=for-the-badge" /></td>
-    <td><img src="https://img.shields.io/badge/-%23000000.svg?&style=for-the-badge&logo=ios&logoColor=white" /></td>
+    <td><img src="https://img.shields.io/badge/YOLO%20v3%2Fv4%2Fv5-%23121011.svg?&style=for-the-badge" /></td>
   </tr>
 </table>
 
----
+## Supported Models
 
-## Before You start:
+| Model | Backbone | Source Weights | Input Size |
+|-------|----------|---------------|------------|
+| YOLOv3 | Darknet53 | `.weights` (Darknet) | 416 |
+| YOLOv3-tiny | Darknet53-tiny | `.weights` (Darknet) | 416 |
+| YOLOv4 | CSPDarknet53 | `.weights` (Darknet) | 416 |
+| YOLOv4-tiny | CSPDarknet53-tiny | `.weights` (Darknet) | 416 |
+| **YOLOv5s** | CSPDarknet + SPPF + PANet | `.pt` (PyTorch) or `.npz` | 640 |
 
-- [ ] In the first place You need to **have Darknet YOLOv3 or v4 weights to work with**. Weights might be either **custom trained** or **pre-trained** on benchmark [COCO dataset](https://cocodataset.org/#home). To download pre-trained `yolov4.weights` click [here](https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v3_optimal/yolov4.weights).
-- [ ] Except weights, `.names` file is required for model to have class labels reference. For benchmark COCO dataset, file `coco.names` is already available [here](https://github.com/patryklaskowski/Convert_Darknet_YOLO_to_TensorFlow/blob/master/data/classes/coco.names).
+### YOLOv5 Architecture
 
-## Start
+YOLOv5 introduces several improvements over v3/v4:
 
-### 1. Prepare environment
+- **CSPDarknet backbone** with C3 modules (simplified CSP blocks) and SiLU activation
+- **SPPF** (Spatial Pyramid Pooling Fast) - sequential max-pooling for multi-scale features
+- **PANet neck** - bidirectional feature aggregation (top-down + bottom-up)
+- **Bounded predictions** - `(2*sigmoid(t))^2 * anchor` for width/height prevents gradient explosion
+- **Configurable model sizes** via width/depth multipliers (n/s/m/l/x)
 
-```
-git clone https://github.com/patryklaskowski/Convert_Darknet_YOLO_to_TensorFlow.git && \
-cd Convert_Darknet_YOLO_to_TensorFlow && \
-python3.7 -m venv env && \
-source env/bin/activate && \
-python3.7 -m pip install -U pip && \
-python3.7 -m pip install -r requirements.txt
-```
+## Quick Start
 
-### 2. Put `.weights` file in `./data/` folder.
+### 1. Set up environment
 
-Darknet YOLOv4 weights to download.
-
-<p align='center'>
-  <table border=3>
-    <thead>
-      <td>yolov4.weights<br>(COCO dataset)</td>
-      <td>yolov4_licence_plate.weights</td>
-    </thead>
-    <tr>
-      <td><a href="https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v3_optimal/yolov4.weights">Download</a></td>
-      <td><a href="https://drive.google.com/file/d/1ZNGtzrDXavZd-1AFhXlftWoFxXg2Xm09/view?usp=sharing">Download</a></td>
-    </tr>
-  </table>
-</p>
-
-My `.weights` file is here: `./data/yolov4_licence_plate.weights`
-
-### 3. Prepare `.names` file respectively to `.weights`.
-`.names` file contains all class labels for specific YOLO weights where each line represents one class name.
-
-#### NOTE
-> `.names` file for domain `yolov4.weights` is already prepared on path `./data/classes/coco.names`.
-> `coco.names` has 80 rows -> each one corresponds to single label.<br>
-
-<p align='center'>
-  <table border=3>
-    <thead>
-      <td>coco.names</td>
-      <td>licence_plate.names</td>
-    </thead>
-    <tr>
-      <td><a href="data/classes/coco.names">Show on path</a></td>
-      <td><a href="https://drive.google.com/file/d/1k_8Ltv8WohGswhBgh6-1_fnW5LiCO7h1/view?usp=sharing">Download</a></td>
-    </tr>
-  </table>
-</p>
-
-My `.names` file is here: `./data/classes/licence_plate.names`
-
-<p align="center"><img src="data/license_late_names.png"></p>
-
-### 4. Adjust `config.py` file.
-
-File is here: `./core/config.py`. Edit **only** `__C.YOLO.CLASSES` value to be path that points prepared `.names` file.
-
-#### NOTE
-> By default `__C.YOLO.CLASSES` points to `./data/classes/coco.names` file.<br>
-> Therefore if you use domain `coco.names` there is no need to change.
-
-According to my `.names` file: `__C.YOLO.CLASSES = "./data/classes/licence_plate.names"`
-
-<p align="center"><img src="data/config.png"></p>
-
----
-
-### Summarize
-
-So far we have:
-- [x] `.weights` on path `./data/yolov4_licence_plate.weights`
-- [x] `.names` on path `./data/classes/licence_plate.names`
-- [x] adjusted `__C.YOLO.CLASSES` param inside 'config.py' on path `./core/config.py`
-
-You have environment prepared to perform conversion.
-
----
-
-### 5. Convert Darknet weights into Tensorflow.
-
-#### a. Into regular Tensorflow `.pb` model
-
-`save_model.py` does the job.<br>
-Required flags:
-- `--weights` : path to weights `./data/yolov4_licence_plate.weights`
-- `--output` : where to save output `./checkpoints/license_plate-416`
-- `--input_size` : size of YOYLO input data `416` (px)
-- `--model` : one of ['yolov3', yolov3] `yolov4`
-
-```
-python3.7 save_model.py --weights ./data/yolov4_licence_plate.weights --output ./checkpoints/license_plate-416 --input_size 416 --model yolov4
+```bash
+git clone <this-repo> && cd yolo-2-tflite
+python3 -m venv env && source env/bin/activate
+pip install -r requirements.txt
 ```
 
-**This creates new folder `./checkpoints/license_plate-416` that stores `saved_model.pb` - actual Tensorflow model.**
+### 2. Download weights
 
-#### b. Into Tensorflow Lite `.tflite` model
+**YOLOv4 (Darknet):**
+- [yolov4.weights](https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v3_optimal/yolov4.weights) (COCO, 80 classes)
 
-This option is lightweight. This solution trade off speed over accuracy.<br>
-Great for edge devices such as mobile phones, raspberry pi and others.
+**YOLOv5 (PyTorch):**
+- Download from [Ultralytics YOLOv5 releases](https://github.com/ultralytics/yolov5/releases) (e.g., `yolov5s.pt`)
 
-```
-python3.7 save_model.py --weights ./data/yolov4_licence_plate.weights --output ./checkpoints/license_plate-416 --input_size 416 --model yolov4 --framework tflite
-python3.7 convert_tflite.py --weights ./checkpoints/license_plate-416 --output ./checkpoints/yolov4_license_plate-416.tflite
-```
+### 3. Convert to TensorFlow
 
-Difference makes `--framework tflite` flag.
-
-**This creates new light weight Tensorflow object `./checkpoints/yolov4_license_plate-416.tflite` - actual Tensorflow Lite model.**
-
----
-
-# Model (one of [`.pb`, `.tflite`]) has been successfully converted.
-# Now ready to run.
-
----
-
-## a. Run regular Tensorflow `.pb` model
-
-### Detect image
-
-```
-python3.7 detect.py --weights ./checkpoints/license_plate-416 --size 416 --model yolov4 --images ./data/images/license_plate.jpg
+**YOLOv4:**
+```bash
+python save_model.py --weights ./data/yolov4.weights \
+    --output ./checkpoints/yolov4-416 \
+    --input_size 416 --model yolov4
 ```
 
-<p align="center"><img src="data/result.png"></p>
+**YOLOv5:**
+```bash
+# Option A: Direct from PyTorch weights (requires torch)
+python save_model.py --weights ./data/yolov5s.pt \
+    --output ./checkpoints/yolov5s-640 \
+    --input_size 640 --model yolov5
 
-#### NOTE
-> To run multiple image detection, change flag `--images` using following pattern `--images './path/to/image1.jpg, ./path/to/image2.jpg, ./another/path/image.jpg'`
-
-### Detect video
-
-```
-python3.7 detect_video.py --weights ./checkpoints/license_plate-416 --size 416 --model yolov4 --video ./data/video/road.mp4 --output ./detections/results.avi
-```
-<p align="center"><img src="data/results.gif"></p>
-
-#### NOTE
-> To run predictions from webcam set `--video` flag argument to `0` as follows `--video 0`.
-
-## b. Run lightweight Tensorflow Lite `.tflite` model
-
-### Detect image
-
-```
-python3.7 detect.py --weights ./checkpoints/yolov4_license_plate-416.tflite --size 416 --model yolov4 --images ./data/images/license_plate.jpg --framework tflite
+# Option B: Convert weights first (on a machine with torch), then use .npz
+python convert_weights.py --weights ./data/yolov5s.pt --output ./data/yolov5s.npz
+python save_model.py --weights ./data/yolov5s.npz \
+    --output ./checkpoints/yolov5s-640 \
+    --input_size 640 --model yolov5
 ```
 
-### Detect video
+### 4. Convert to TensorFlow Lite
+
+First, save the model with `--framework tflite`:
+```bash
+python save_model.py --weights ./data/yolov5s.pt \
+    --output ./checkpoints/yolov5s-640 \
+    --input_size 640 --model yolov5 --framework tflite
+```
+
+Then convert to `.tflite`:
+```bash
+python convert_tflite.py --weights ./checkpoints/yolov5s-640 \
+    --output ./checkpoints/yolov5s-640.tflite
+```
+
+Quantization options:
+```bash
+# Float16 (smaller, slight accuracy loss)
+python convert_tflite.py --weights ./checkpoints/yolov5s-640 \
+    --output ./checkpoints/yolov5s-640-fp16.tflite \
+    --quantize_mode float16
+
+# Int8 (smallest, requires calibration dataset)
+python convert_tflite.py --weights ./checkpoints/yolov5s-640 \
+    --output ./checkpoints/yolov5s-640-int8.tflite \
+    --quantize_mode int8 --dataset /path/to/calibration.txt
+```
+
+### 5. Run detection
+
+**Image detection:**
+```bash
+# TensorFlow SavedModel
+python detect.py --weights ./checkpoints/yolov5s-640 \
+    --size 640 --model yolov5 \
+    --images ./data/images/kite.jpg
+
+# TensorFlow Lite
+python detect.py --weights ./checkpoints/yolov5s-640.tflite \
+    --size 640 --model yolov5 --framework tflite \
+    --images ./data/images/kite.jpg
+```
+
+**Video detection:**
+```bash
+python detect_video.py --weights ./checkpoints/yolov5s-640 \
+    --size 640 --model yolov5 \
+    --video ./data/video/video.mp4 \
+    --output ./detections/result.avi
+```
+
+## Conversion Pipeline
 
 ```
-python3.7 detect_video.py --weights ./checkpoints/yolov4_license_plate-416.tflite --size 416 --model yolov4 --video ./data/video/road.mp4 --output ./detections/results.avi --framework tflite
+YOLOv3/v4 (.weights)  ──┐
+                         ├──> save_model.py ──> TF SavedModel (.pb)
+YOLOv5 (.pt or .npz) ──┘         │
+                                  ├──> convert_tflite.py ──> TFLite (.tflite)
+                                  │
+                                  └──> detect.py / detect_video.py (inference)
 ```
 
----
+## Project Structure
 
-## Command Line Args Reference
+```
+.
+├── core/
+│   ├── backbone.py      # Backbone architectures (Darknet53, CSPDarknet, CSPDarknet-v5)
+│   ├── common.py        # Building blocks (Conv, BN, Residual, C3, SPPF, SiLU)
+│   ├── config.py        # Configuration (anchors, strides, training params)
+│   ├── dataset.py       # Dataset loading and preprocessing
+│   ├── utils.py         # Weight loading, image processing, NMS, IoU
+│   └── yolov4.py        # Model architectures (YOLOv3/v4/v5) and decode functions
+├── data/
+│   ├── classes/
+│   │   └── coco.names   # COCO 80-class labels
+│   ├── images/          # Sample test images
+│   └── video/           # Sample test videos
+├── save_model.py        # Convert weights to TensorFlow SavedModel
+├── convert_tflite.py    # Convert SavedModel to TFLite
+├── convert_weights.py   # Convert YOLOv5 .pt weights to .npz (no torch needed at inference)
+├── detect.py            # Image detection
+├── detect_video.py      # Video/webcam detection
+├── requirements.txt     # Python dependencies
+└── README.md
+```
+
+## YOLOv5 Model Sizes
+
+The YOLOv5 implementation supports different model sizes via width/depth multipliers:
+
+| Model | Width | Depth | Params (approx) |
+|-------|-------|-------|-----------------|
+| YOLOv5n | 0.25 | 0.33 | 1.9M |
+| YOLOv5s | 0.50 | 0.33 | 7.2M |
+| YOLOv5m | 0.75 | 0.67 | 21.2M |
+| YOLOv5l | 1.00 | 1.00 | 46.5M |
+| YOLOv5x | 1.25 | 1.33 | 86.7M |
+
+Default is YOLOv5s. The architecture automatically adjusts channel widths and block depths.
+
+## Command Line Reference
 
 ```
 save_model.py:
-  --weights: path to weights file
-    (default: './data/yolov4.weights')
-  --output: path to output
-    (default: './checkpoints/yolov4-416')
-  --[no]tiny: yolov4 or yolov4-tiny
-    (default: 'False')
-  --input_size: define input size of export model
-    (default: 416)
-  --framework: what framework to use (tf, trt, tflite)
-    (default: tf)
-  --model: yolov3 or yolov4
-    (default: yolov4)
+  --weights    Path to weights file (.weights for v3/v4, .pt/.npz for v5)
+  --output     Path to output SavedModel directory
+  --tiny       Use tiny variant (v3/v4 only)
+  --input_size Input image size (default: 416, use 640 for v5)
+  --score_thres Score threshold for filtering (default: 0.2)
+  --framework  Output framework: tf, trt, tflite (default: tf)
+  --model      Model type: yolov3, yolov4, yolov5 (default: yolov4)
+
+convert_tflite.py:
+  --weights       Path to SavedModel directory
+  --output        Path to output .tflite file
+  --quantize_mode Quantization: float32, float16, int8 (default: float32)
+  --dataset       Calibration dataset for int8 quantization
+
+convert_weights.py:
+  --weights  Path to YOLOv5 .pt file
+  --output   Path to output .npz file
 
 detect.py:
-  --images: path to input images as a string with images separated by ","
-    (default: './data/images/kite.jpg')
-  --output: path to output folder
-    (default: './detections/')
-  --[no]tiny: yolov4 or yolov4-tiny
-    (default: 'False')
-  --weights: path to weights file
-    (default: './checkpoints/yolov4-416')
-  --framework: what framework to use (tf, trt, tflite)
-    (default: tf)
-  --model: yolov3 or yolov4
-    (default: yolov4)
-  --size: resize images to
-    (default: 416)
-  --iou: iou threshold
-    (default: 0.45)
-  --score: confidence threshold
-    (default: 0.25)
+  --framework  tf, tflite, or trt (default: tf)
+  --weights    Path to model weights
+  --size       Input image size (default: 416)
+  --tiny       Use tiny variant (v3/v4 only)
+  --model      yolov3, yolov4, or yolov5 (default: yolov4)
+  --images     Comma-separated image paths
+  --output     Output directory (default: ./detections/)
+  --iou        IoU threshold (default: 0.45)
+  --score      Score threshold (default: 0.25)
 
 detect_video.py:
-  --video: path to input video (use 0 for webcam)
-    (default: './data/video/video.mp4')
-  --output: path to output video (remember to set right codec for given format. e.g. XVID for .avi)
-    (default: None)
-  --output_format: codec used in VideoWriter when saving video to file
-    (default: 'XVID)
-  --[no]tiny: yolov4 or yolov4-tiny
-    (default: 'false')
-  --weights: path to weights file
-    (default: './checkpoints/yolov4-416')
-  --framework: what framework to use (tf, trt, tflite)
-    (default: tf)
-  --model: yolov3 or yolov4
-    (default: yolov4)
-  --size: resize images to
-    (default: 416)
-  --iou: iou threshold
-    (default: 0.45)
-  --score: confidence threshold
-    (default: 0.25)
+  --video          Input video path or 0 for webcam
+  --output         Output video path
+  --output_format  Video codec (default: XVID)
+  (other flags same as detect.py)
 ```
 
----
+## References
 
-## References:
-- [hunglc007](https://github.com/hunglc007/tensorflow-yolov4-tflite)
+- [hunglc007/tensorflow-yolov4-tflite](https://github.com/hunglc007/tensorflow-yolov4-tflite) - Original YOLOv4 TensorFlow implementation
+- [ultralytics/yolov5](https://github.com/ultralytics/yolov5) - Official YOLOv5 PyTorch implementation
+- [AlexeyAB/darknet](https://github.com/AlexeyAB/darknet) - Darknet YOLO framework

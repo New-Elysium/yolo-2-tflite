@@ -15,6 +15,8 @@ from core.config import cfg
 # ANCHORS = utils.get_anchors(cfg.YOLO.ANCHORS)
 
 def YOLO(input_layer, NUM_CLASS, model='yolov4', is_tiny=False):
+    if model == 'yolov5':
+        return YOLOv5(input_layer, NUM_CLASS)
     if is_tiny:
         if model == 'yolov4':
             return YOLOv4_tiny(input_layer, NUM_CLASS)
@@ -160,7 +162,91 @@ def YOLOv3_tiny(input_layer, NUM_CLASS):
 
     return [conv_mbbox, conv_lbbox]
 
-def decode(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i, XYSCALE=[1,1,1], FRAMEWORK='tf'):
+
+# ============================================================================
+# YOLOv5
+# ============================================================================
+
+def YOLOv5(input_layer, NUM_CLASS, width_multiple=0.50, depth_multiple=0.33):
+    """YOLOv5 architecture with CSPDarknet backbone and PANet neck.
+
+    Implements the full YOLOv5 model including:
+    - CSPDarknet backbone with C3 modules and SPPF
+    - PANet neck with top-down and bottom-up feature aggregation
+    - Detection heads at 3 scales (P3/8, P4/16, P5/32)
+
+    Default multipliers produce YOLOv5s. Other sizes:
+    - YOLOv5n: width=0.25, depth=0.33
+    - YOLOv5s: width=0.50, depth=0.33
+    - YOLOv5m: width=0.75, depth=0.67
+    - YOLOv5l: width=1.00, depth=1.00
+    - YOLOv5x: width=1.25, depth=1.33
+    """
+    def make_channels(c):
+        return max(int(c * width_multiple), 1)
+
+    def make_depth(n):
+        return max(round(n * depth_multiple), 1)
+
+    ch_256 = make_channels(256)    # 128 for yolov5s
+    ch_512 = make_channels(512)    # 256 for yolov5s
+    ch_1024 = make_channels(1024)  # 512 for yolov5s
+
+    # Backbone
+    route_1, route_2, conv = backbone.cspdarknet_v5(
+        input_layer, width_multiple=width_multiple, depth_multiple=depth_multiple
+    )
+    # route_1: P3 features [B, H/8, W/8, ch_256]
+    # route_2: P4 features [B, H/16, W/16, ch_512]
+    # conv:    P5 features [B, H/32, W/32, ch_1024]
+
+    # ---- PANet Neck (Top-Down) ----
+
+    # P5 -> P4 lateral
+    head_route_1 = common.conv_v5(conv, ch_512, kernel_size=1, stride=1)
+    conv = common.upsample(head_route_1)
+    conv = tf.concat([conv, route_2], axis=-1)  # Concat with P4 backbone
+    conv = common.c3(conv, ch_512, n=make_depth(3), shortcut=False)
+
+    # P4 -> P3 lateral
+    head_route_2 = common.conv_v5(conv, ch_256, kernel_size=1, stride=1)
+    conv = common.upsample(head_route_2)
+    conv = tf.concat([conv, route_1], axis=-1)  # Concat with P3 backbone
+    p3 = common.c3(conv, ch_256, n=make_depth(3), shortcut=False)
+
+    # P3 output (small objects, stride 8)
+    conv_sbbox = common.conv_v5(p3, 3 * (NUM_CLASS + 5), kernel_size=1, stride=1,
+                                activate=False, bn=False)
+
+    # ---- PANet Neck (Bottom-Up) ----
+
+    # P3 -> P4
+    conv = common.conv_v5(p3, ch_256, kernel_size=3, stride=2)
+    conv = tf.concat([conv, head_route_2], axis=-1)
+    p4 = common.c3(conv, ch_512, n=make_depth(3), shortcut=False)
+
+    # P4 output (medium objects, stride 16)
+    conv_mbbox = common.conv_v5(p4, 3 * (NUM_CLASS + 5), kernel_size=1, stride=1,
+                                activate=False, bn=False)
+
+    # P4 -> P5
+    conv = common.conv_v5(p4, ch_512, kernel_size=3, stride=2)
+    conv = tf.concat([conv, head_route_1], axis=-1)
+    p5 = common.c3(conv, ch_1024, n=make_depth(3), shortcut=False)
+
+    # P5 output (large objects, stride 32)
+    conv_lbbox = common.conv_v5(p5, 3 * (NUM_CLASS + 5), kernel_size=1, stride=1,
+                                activate=False, bn=False)
+
+    return [conv_sbbox, conv_mbbox, conv_lbbox]
+
+
+def decode(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i, XYSCALE=[1,1,1], FRAMEWORK='tf', model='yolov4'):
+    if model == 'yolov5':
+        if FRAMEWORK == 'tflite':
+            return decode_v5_tflite(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=i)
+        else:
+            return decode_v5_tf(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=i)
     if FRAMEWORK == 'trt':
         return decode_trt(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=i, XYSCALE=XYSCALE)
     elif FRAMEWORK == 'tflite':
@@ -287,6 +373,99 @@ def decode_trt(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=0, XYSCA
     pred_xywh = tf.reshape(pred_xywh, (batch_size, -1, 4))
     return pred_xywh, pred_prob
     # return tf.concat([pred_xywh, pred_conf, pred_prob], axis=-1)
+
+
+# ============================================================================
+# YOLOv5 Decode Functions
+# YOLOv5 uses different bounding box prediction formulas:
+#   xy = (2 * sigmoid(raw_xy) - 0.5 + grid_offset) * stride
+#   wh = (2 * sigmoid(raw_wh)) ** 2 * anchor
+# This bounds predictions and prevents gradient explosion from exp().
+# ============================================================================
+
+def decode_v5_tf(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=0):
+    """YOLOv5 decode for TensorFlow inference."""
+    batch_size = tf.shape(conv_output)[0]
+    conv_output = tf.reshape(conv_output,
+                             (batch_size, output_size, output_size, 3, 5 + NUM_CLASS))
+
+    conv_raw_dxdy, conv_raw_dwdh, conv_raw_conf, conv_raw_prob = tf.split(
+        conv_output, (2, 2, 1, NUM_CLASS), axis=-1)
+
+    xy_grid = tf.meshgrid(tf.range(output_size), tf.range(output_size))
+    xy_grid = tf.expand_dims(tf.stack(xy_grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
+    xy_grid = tf.tile(tf.expand_dims(xy_grid, axis=0), [batch_size, 1, 1, 3, 1])
+    xy_grid = tf.cast(xy_grid, tf.float32)
+
+    # YOLOv5 formulas
+    pred_xy = (2.0 * tf.sigmoid(conv_raw_dxdy) - 0.5 + xy_grid) * STRIDES[i]
+    pred_wh = (2.0 * tf.sigmoid(conv_raw_dwdh)) ** 2 * ANCHORS[i]
+    pred_xywh = tf.concat([pred_xy, pred_wh], axis=-1)
+
+    pred_conf = tf.sigmoid(conv_raw_conf)
+    pred_prob = tf.sigmoid(conv_raw_prob)
+
+    pred_prob = pred_conf * pred_prob
+    pred_prob = tf.reshape(pred_prob, (batch_size, -1, NUM_CLASS))
+    pred_xywh = tf.reshape(pred_xywh, (batch_size, -1, 4))
+
+    return pred_xywh, pred_prob
+
+def decode_v5_tflite(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=0):
+    """YOLOv5 decode for TFLite inference."""
+    conv_raw_dxdy_0, conv_raw_dwdh_0, conv_raw_score_0,\
+    conv_raw_dxdy_1, conv_raw_dwdh_1, conv_raw_score_1,\
+    conv_raw_dxdy_2, conv_raw_dwdh_2, conv_raw_score_2 = tf.split(
+        conv_output, (2, 2, 1+NUM_CLASS, 2, 2, 1+NUM_CLASS, 2, 2, 1+NUM_CLASS), axis=-1)
+
+    conv_raw_score = [conv_raw_score_0, conv_raw_score_1, conv_raw_score_2]
+    for idx, score in enumerate(conv_raw_score):
+        score = tf.sigmoid(score)
+        score = score[:, :, :, 0:1] * score[:, :, :, 1:]
+        conv_raw_score[idx] = tf.reshape(score, (1, -1, NUM_CLASS))
+    pred_prob = tf.concat(conv_raw_score, axis=1)
+
+    conv_raw_dwdh = [conv_raw_dwdh_0, conv_raw_dwdh_1, conv_raw_dwdh_2]
+    for idx, dwdh in enumerate(conv_raw_dwdh):
+        dwdh = (2.0 * tf.sigmoid(dwdh)) ** 2 * ANCHORS[i][idx]
+        conv_raw_dwdh[idx] = tf.reshape(dwdh, (1, -1, 2))
+    pred_wh = tf.concat(conv_raw_dwdh, axis=1)
+
+    xy_grid = tf.meshgrid(tf.range(output_size), tf.range(output_size))
+    xy_grid = tf.stack(xy_grid, axis=-1)
+    xy_grid = tf.expand_dims(xy_grid, axis=0)
+    xy_grid = tf.cast(xy_grid, tf.float32)
+
+    conv_raw_dxdy = [conv_raw_dxdy_0, conv_raw_dxdy_1, conv_raw_dxdy_2]
+    for idx, dxdy in enumerate(conv_raw_dxdy):
+        dxdy = (2.0 * tf.sigmoid(dxdy) - 0.5 + xy_grid) * STRIDES[i]
+        conv_raw_dxdy[idx] = tf.reshape(dxdy, (1, -1, 2))
+    pred_xy = tf.concat(conv_raw_dxdy, axis=1)
+    pred_xywh = tf.concat([pred_xy, pred_wh], axis=-1)
+
+    return pred_xywh, pred_prob
+
+def decode_v5_train(conv_output, output_size, NUM_CLASS, STRIDES, ANCHORS, i=0):
+    """YOLOv5 decode for training."""
+    conv_output = tf.reshape(conv_output,
+                             (tf.shape(conv_output)[0], output_size, output_size, 3, 5 + NUM_CLASS))
+
+    conv_raw_dxdy, conv_raw_dwdh, conv_raw_conf, conv_raw_prob = tf.split(
+        conv_output, (2, 2, 1, NUM_CLASS), axis=-1)
+
+    xy_grid = tf.meshgrid(tf.range(output_size), tf.range(output_size))
+    xy_grid = tf.expand_dims(tf.stack(xy_grid, axis=-1), axis=2)
+    xy_grid = tf.tile(tf.expand_dims(xy_grid, axis=0), [tf.shape(conv_output)[0], 1, 1, 3, 1])
+    xy_grid = tf.cast(xy_grid, tf.float32)
+
+    pred_xy = (2.0 * tf.sigmoid(conv_raw_dxdy) - 0.5 + xy_grid) * STRIDES[i]
+    pred_wh = (2.0 * tf.sigmoid(conv_raw_dwdh)) ** 2 * ANCHORS[i]
+    pred_xywh = tf.concat([pred_xy, pred_wh], axis=-1)
+
+    pred_conf = tf.sigmoid(conv_raw_conf)
+    pred_prob = tf.sigmoid(conv_raw_prob)
+
+    return tf.concat([pred_xywh, pred_conf, pred_prob], axis=-1)
 
 
 def filter_boxes(box_xywh, scores, score_threshold=0.4, input_shape = tf.constant([416,416])):

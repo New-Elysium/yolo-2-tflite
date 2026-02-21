@@ -18,7 +18,7 @@ flags.DEFINE_string('weights', './checkpoints/yolov4-416',
                     'path to weights file')
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
-flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
+flags.DEFINE_string('model', 'yolov4', 'yolov3, yolov4, or yolov5')
 flags.DEFINE_list('images', './data/images/kite.jpg', 'path to input image')
 flags.DEFINE_string('output', './detections/', 'path to output folder')
 flags.DEFINE_float('iou', 0.45, 'iou threshold')
@@ -39,7 +39,7 @@ def main(_argv):
     else:
             saved_model_loaded = tf.saved_model.load(FLAGS.weights, tags=[tag_constants.SERVING])
 
-    # loop through images in list and run Yolov4 model on each
+    # loop through images in list and run YOLO model on each
     for count, image_path in enumerate(images, 1):
         original_image = cv2.imread(image_path)
         original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
