@@ -396,12 +396,13 @@ def nms(bboxes, iou_threshold, sigma=0.3, method='nms'):
 
 def freeze_all(model, frozen=True):
     model.trainable = not frozen
-    if isinstance(model, tf.keras.Model):
+    if isinstance(model, keras.Model):
         for l in model.layers:
             freeze_all(l, frozen)
+
 def unfreeze_all(model, frozen=False):
     model.trainable = not frozen
-    if isinstance(model, tf.keras.Model):
+    if isinstance(model, keras.Model):
         for l in model.layers:
             unfreeze_all(l, frozen)
 

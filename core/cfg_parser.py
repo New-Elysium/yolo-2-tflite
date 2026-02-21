@@ -119,7 +119,12 @@ class CFGParser:
         return (height, width, channels)
     
     def get_num_classes(self) -> int:
-        """Get number of classes from network config"""
+        """Get number of classes from YOLO layers (where it's actually defined)"""
+        # In Darknet, 'classes' is defined in [yolo] layers, not [net]
+        for layer in self.layers:
+            if layer.get('type') == 'yolo' and 'classes' in layer:
+                return layer['classes']
+        # Fallback: check [net] section and default to 80 (COCO)
         return self.net_config.get('classes', 80)
     
     def get_anchors(self) -> List[List[int]]:

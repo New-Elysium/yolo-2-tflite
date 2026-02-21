@@ -197,25 +197,29 @@ save_model.py:
 
 ## 🏗️ Architecture Support
 
-### Fully Supported
+### Fully Supported (Legacy Mode)
 - **YOLOv3**: Standard and tiny variants
-- **YOLOv4**: Standard and tiny variants  
-- **YOLOv4-CSP**: Cross Stage Partial networks
-- **Scaled-YOLOv4**: P5, P6, P7 variants
-- **YOLOv7**: Standard and tiny variants
+- **YOLOv4**: Standard and tiny variants
+
+### Generic Mode (via CFG Parser)
+Any Darknet model that uses the supported layer types below can be converted.
+This includes YOLOv3, YOLOv4, YOLOv4-CSP, Scaled-YOLOv4, YOLOv7, and custom models,
+as long as the CFG file uses standard Darknet layer types.
 
 ### Layer Types Supported
-- [convolutional]: Convolutional layers with batch normalization
+- [convolutional]: Conv2D + optional BatchNorm + activation
 - [maxpool]: Max pooling layers
-- [route]: Layer concatenation/routing
-- [shortcut]: Residual connections
-- [upsample]: Upsampling layers
-- [yolo]: YOLO detection heads
+- [route]: Layer concatenation/routing with groups support
+- [shortcut]: Residual connections (element-wise add)
+- [upsample]: Upsampling layers (bilinear)
+- [yolo]: YOLO detection head output marker
 - [spp]: Spatial Pyramid Pooling
-- [csp]: Cross Stage Partial blocks
-- [e-elan]: Extended ELAN blocks (YOLOv7)
-- [sppcspc]: SPP CSPC blocks (YOLOv7)
-- [mp]: MaxPool blocks (YOLOv7)
+- [dropout]: Dropout layers
+- [connected]: Fully connected / dense layers
+- [avgpool]: Global average pooling
+- [reorg]: Space-to-depth reorganization
+- [sam]: Spatial attention module
+- [scale_channels]: Channel scaling
 
 ### Activation Functions
 - leaky, mish, swish, linear, relu, elu, selu, gelu, hardmish, hardswish
